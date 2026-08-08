@@ -12,11 +12,15 @@ from typing import Dict, Any
 import pandas as pd
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
+import time
 
-from state.graph_state import AgentState
+
+from state import AgentState
 from tools.profiling_tool import ProfilingTool
-from agents.profiler_prompts import PROFILER_SYSTEM_PROMPT, PROFILER_USER_PROMPT_TEMPLATE
-from agents.profiler_schemas import ProfileOutput
+from agents.profiler.prompts import PROFILER_SYSTEM_PROMPT, PROFILER_USER_PROMPT_TEMPLATE
+from agents.profiler.schemas import ProfileOutput
+
 
 # ---------------------------------------------------------------------------
 # Environment & logging
@@ -32,24 +36,53 @@ logging.basicConfig(
 # ---------------------------------------------------------------------------
 # LLM — fully configured from .env
 # ---------------------------------------------------------------------------
-def _build_llm() -> ChatOpenAI:
-    """Instantiate ChatOpenAI from environment variables."""
-    model = os.getenv("MODEL", "gpt-4.1-nano")
-    api_key = os.getenv("OPENAI_API_KEY")
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+class ResilientFallbackModel(BaseChatModel):
+    primary: Any
+    fallback: Any
 
-    if not api_key:
-        raise EnvironmentError(
-            "OPENAI_API_KEY is not set. "
-            "Copy .env.example to .env and fill in your API key."
-        )
+    def _generate(self, messages: Any, stop: Any = None, **kwargs: Any) -> Any:
+        try:
+            return self.primary._generate(messages, stop=stop, **kwargs)
+        except Exception:
+            for attempt in range(1, 4):
+                try:
+                    return self.fallback._generate(messages, stop=stop, **kwargs)
+                except Exception as fb_err:
+                    if attempt < 3:
+                        time.sleep(3.0)
+                    else:
+                        raise fb_err
 
-    return ChatOpenAI(
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        temperature=0,
-    )
+    def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
+        try:
+            return self.primary.with_structured_output(schema, **kwargs)
+        except Exception:
+            for attempt in range(1, 4):
+                try:
+                    return self.fallback.with_structured_output(schema, **kwargs)
+                except Exception as fb_err:
+                    if attempt < 3:
+                        time.sleep(3.0)
+                    else:
+                        raise fb_err
+
+    @property
+    def _llm_type(self) -> str:
+        return "resilient_fallback"
+
+
+
+from tools.llm_factory import get_ordered_llm
+
+
+def _build_llm():
+    """Instantiate ordered LLM chain: Groq -> Gemini -> OpenAI."""
+    return get_ordered_llm(temperature=0)
+
+
+
+
+
 
 
 # Tool instance (stateless, safe to share)

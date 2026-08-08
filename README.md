@@ -1,135 +1,28 @@
-# Profiler Agent — Member 1
+# data_analyst_agent
 
-A production-grade LangGraph Profiler Agent that ingests CSV files, generates an interactive `ydata-profiling` HTML report, and returns a structured dataset profile via a FastAPI backend with a clean single-page HTML/JS frontend.
+Multi-agent **AI Data Analyst** built with LangGraph. One CSV goes in; a validated
+analysis report (HTML + PDF) and an interactive, report-grounded Q&A come out.
 
----
+## Architecture (three agents)
+Pipeline: **Profiler → Analysis → Insight & Report**, joined by a single shared
+`AgentState` contract.
 
-## Project Structure
+| Agent | Role | Code | Readme |
+|-------|------|------|--------|
+| **Member 1 — Profiler** | CSV → pandas + ydata-profiling HTML report + structured `profile` | `agents/profiler_agent.py`, `tools/`, `api/`, `ui/` | `agents/m1/README.md` |
+| **Member 2 — Analysis** | planner → executor (sandboxed code) → reflector → `analysis_results` | `agents/analysis_agent.py`, `tools/python_executor.py` | (see docstring) |
+| **Member 3 — Insight** | validates, writes insights/recommendations, compiles HTML+PDF report, report-grounded Streamlit chat | `agents/insight/` | `agents/insight/README_INSIGHT.md` |
 
-```
-.
-├── agents/
-│   ├── profiler_agent.py       # LangGraph node
-│   ├── profiler_prompts.py     # LLM prompts
-│   └── profiler_schemas.py     # Pydantic output schema
-├── api/
-│   └── main.py                 # FastAPI backend
-├── data/
-│   └── sample_sales.csv        # Demo CSV
-├── mocks/
-│   └── mock_profile.json       # Example output for teammates
-├── output/profiles/            # Generated HTML reports (gitignored)
-├── state/
-│   └── graph_state.py          # Shared AgentState TypedDict
-├── tests/
-│   └── test_profiler.py        # Edge case test suite
-├── tools/
-│   └── profiling_tool.py       # ydata-profiling BaseTool
-├── ui/
-│   └── index.html              # Single-page frontend
-├── .env.example                # Environment variable template
-├── requirements.txt
-└── README.md
-```
-
----
-
-## Setup
-
-### 1. Create & activate virtual environment
-
+## Quick start
 ```bash
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
+venv/bin/python -m pytest agents/insight/tests -q       # Member 3 suite (no API key)
+venv/bin/streamlit run agents/insight/streamlit_app.py   # report + chat UI
 ```
 
-### 2. Install dependencies
+## Shared state contract
+Single source of truth: `state/graph_state.py` (convention) re-exported as
+`agents/state.py` so all agents import `AgentState` from one place.
 
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env and fill in your OPENAI_API_KEY (and optionally OPENAI_BASE_URL)
-```
-
-`.env` variables:
-
-| Variable | Description | Default |
-|---|---|---|
-| `MODEL` | LLM model name | `gpt-4.1-nano` |
-| `OPENAI_API_KEY` | Your OpenAI API key | *(required)* |
-| `OPENAI_BASE_URL` | API base URL (for proxies/alternatives) | `https://api.openai.com/v1` |
-| `OUTPUT_DIR` | Where HTML reports are saved | `output/profiles` |
-| `MAX_FILE_SIZE_MB` | Maximum CSV upload size | `50` |
-
----
-
-## Running
-
-### Start the backend
-
-```bash
-uvicorn api.main:app --reload
-```
-
-API will be available at `http://localhost:8000`.  
-Auto-generated API docs: `http://localhost:8000/docs`.
-
-### Open the frontend
-
-```bash
-# From project root
-python -m http.server 8080 --directory ui
-```
-
-Open `http://localhost:8080` in your browser.
-
----
-
-## Running Tests
-
-```bash
-python -m pytest tests/test_profiler.py -v
-```
-
-Tests covering: normal CSV, missing file, non-CSV extension, empty CSV, all-missing column.  
-LLM-dependent tests are skipped automatically if `OPENAI_API_KEY` is not set.
-
----
-
-## API Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Health check |
-| `POST` | `/analyze` | Upload CSV → returns profile JSON |
-| `GET` | `/report/{filename}` | Serves the HTML report |
-
----
-
-## State Contract
-
-- **Reads:** `csv_path`
-- **Writes:** `profile`, `profile_report_path`, `error_log`, `status`
-
-```python
-from agents.profiler_agent import profiler_node
-
-state = {
-    "csv_path": "data/sample_sales.csv",
-    "profile": None,
-    "profile_report_path": None,
-    "error_log": [],
-    "status": "running"
-}
-result = profiler_node(state)
-# result["status"] == "completed"
-# result["profile"]  -> dict with full ProfileOutput
-```
+## Setup / env
+Members use LangChain LLMs (OpenAI / Groq / Gemini) — set the relevant
+`OPENAI_API_KEY` / `GROQ_API_KEY` / `GEMINI_API_KEY`. See each agent's readme.

@@ -3,27 +3,72 @@
 from typing import Dict, Any, List
 import os
 import json
+import time
+from dotenv import load_dotenv
+load_dotenv(override=True)
+from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
-from state.graph_state import AgentState
-from agents.analysis_prompts import (
+from state import AgentState
+
+
+from agents.analysis.prompts import (
     PLANNER_SYSTEM_PROMPT,
     CODE_GENERATION_PROMPT,
     ERROR_FIX_PROMPT,
     REFLECTION_PROMPT
 )
+
 from tools.python_executor import execute_code
 
-# LLM Configuration: Use Groq by default, fallback to Gemini natively for local tests
-if os.environ.get("GROQ_API_KEY"):
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1)
-elif os.environ.get("GEMINI_API_KEY"):
-    # Fallback to Gemini for testing when GROQ_API_KEY is not defined
-    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1)
-else:
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1)
+# LLM Configuration: Check OPENAI_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY from .env
+class ResilientFallbackModel(BaseChatModel):
+    primary: Any
+    fallback: Any
+
+    def _generate(self, messages: Any, stop: Any = None, **kwargs: Any) -> Any:
+        try:
+            return self.primary._generate(messages, stop=stop, **kwargs)
+        except Exception:
+            for attempt in range(1, 4):
+                try:
+                    return self.fallback._generate(messages, stop=stop, **kwargs)
+                except Exception as fb_err:
+                    if attempt < 3:
+                        time.sleep(3.0)
+                    else:
+                        raise fb_err
+
+    def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
+        try:
+            return self.primary.with_structured_output(schema, **kwargs)
+        except Exception:
+            for attempt in range(1, 4):
+                try:
+                    return self.fallback.with_structured_output(schema, **kwargs)
+                except Exception as fb_err:
+                    if attempt < 3:
+                        time.sleep(3.0)
+                    else:
+                        raise fb_err
+
+    @property
+    def _llm_type(self) -> str:
+        return "resilient_fallback"
+
+
+from tools.llm_factory import get_ordered_llm
+
+
+def _build_analysis_llm():
+    """Instantiate ordered LLM chain: Groq -> Gemini -> OpenAI."""
+    return get_ordered_llm(temperature=0.1)
+
+
+llm = _build_analysis_llm()
+
+
 
 MAX_RETRIES = 3
 
@@ -85,11 +130,13 @@ def planner_node(state: AgentState) -> AgentState:
             state["error_log"] = []
         state["error_log"].append(f"Planner: Failed to parse LLM output as JSON: {e}")
         state["error_log"].append(f"Raw output: {plan_text[:500]}")
+        state["analysis_plan"] = []
         state["status"] = "failed"
     except Exception as e:
         if state.get("error_log") is None:
             state["error_log"] = []
         state["error_log"].append(f"Planner: Unexpected error: {e}")
+        state["analysis_plan"] = []
         state["status"] = "failed"
     
     return state
@@ -98,7 +145,8 @@ def planner_node(state: AgentState) -> AgentState:
 def executor_node(state: AgentState) -> AgentState:
     """Executes the next pending task in the analysis plan."""
     
-    analysis_plan = state.get("analysis_plan", [])
+    analysis_plan = state.get("analysis_plan") or []
+
     profile = state.get("profile", {})
     csv_path = state.get("csv_path", "")
     
@@ -117,8 +165,10 @@ def executor_node(state: AgentState) -> AgentState:
     task_name = pending_task["task_name"]
     task_desc = pending_task["description"]
     attempt = pending_task["attempts"] + 1
+    pending_task["attempts"] = attempt
     
     print(f"[EXECUTOR] Executing task {task_id}: {task_name} (attempt {attempt}/{MAX_RETRIES})")
+
     
     # Generate code
     numeric_cols = profile.get("numeric_columns", [])
@@ -216,10 +266,31 @@ def executor_node(state: AgentState) -> AgentState:
                 print(f"[EXECUTOR] Task {task_id} failed, will retry (attempt {attempt})")
             
     except Exception as e:
-        if state.get("error_log") is None:
-            state["error_log"] = []
-        state["error_log"].append(f"Executor: Unexpected error on task {task_id}: {e}")
-        pending_task["status"] = "failed"
+        pending_task["attempts"] = attempt
+        pending_task["last_error"] = str(e)
+        log_entry = {
+            "task_id": task_id,
+            "task_name": task_name,
+            "attempt": attempt,
+            "code": "",
+            "success": False,
+            "stdout": "",
+            "stderr": "",
+            "error": str(e),
+        }
+        if state.get("execution_log") is None:
+            state["execution_log"] = []
+        state["execution_log"].append(log_entry)
+
+        if "429" in str(e) or "rate" in str(e).lower():
+            import time
+            time.sleep(2.0)
+        if attempt >= MAX_RETRIES:
+            pending_task["status"] = "failed"
+            print(f"[EXECUTOR] Task {task_id} failed due to exception: {e}")
+        else:
+            print(f"[EXECUTOR] Task {task_id} error: {e}, retrying (attempt {attempt})")
+
     
     return state
 
@@ -323,4 +394,7 @@ def reflector_node(state: AgentState) -> AgentState:
             state["error_log"].append(f"Reflector: {note}")
     
     state["reflection_notes"] = reflection_notes
+    if state.get("analysis_results"):
+        state["status"] = "completed"
     return state
+
