@@ -41,8 +41,12 @@ def render_pipeline_runner():
             index=0 if samples else None,
         )
         if selected_sample:
-            target_csv_path = samples[selected_sample]
-            st.info(f"Selected: **{selected_sample}**")
+            # Sample is only a *fallback*: an uploaded file always wins.
+            if target_csv_path is None:
+                target_csv_path = samples[selected_sample]
+                st.info(f"Selected: **{selected_sample}**")
+            else:
+                st.info("Using uploaded file (sample selection ignored).")
 
     st.markdown("---")
 

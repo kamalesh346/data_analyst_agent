@@ -7,37 +7,17 @@ from tests.insight.fake_llm import FakeChatModel
 
 
 def _get_chat_model():
-    """Instantiate appropriate chat model based on environment keys with Groq fallback."""
-    import os
-    groq_key = os.getenv("GROQ_API_KEY")
-    groq_llm = None
-    if groq_key:
-        try:
-            from langchain_groq import ChatGroq
-            groq_llm = ChatGroq(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"), groq_api_key=groq_key, temperature=0.1)
-        except Exception:
-            pass
+    """Use the central LLM factory (resolver + failover + pacing + budget).
 
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key:
-        from langchain_openai import ChatOpenAI
-        primary = ChatOpenAI(
-            model=os.getenv("MODEL", "gpt-4.1-nano"),
-            api_key=openai_key,
-            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            temperature=0.1,
-            max_retries=0,
-        )
-
-        if groq_llm:
-            return primary.with_fallbacks([groq_llm])
-        return primary
-    elif groq_llm:
-        return groq_llm
-    elif os.getenv("GEMINI_API_KEY"):
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1)
-    return FakeChatModel()
+    Routes through ``llm.build_chat_model`` so the NVIDIA NIM ``/chat/completions``
+    base_url is normalized, primary 429s are retried, and Groq is the fallback.
+    """
+    try:
+        from llm import build_chat_model
+        return build_chat_model(task="CHAT", temperature=0.1)
+    except Exception:
+        from tests.insight.fake_llm import FakeChatModel
+        return FakeChatModel()
 
 
 
