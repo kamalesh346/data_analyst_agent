@@ -16,8 +16,7 @@ def render_pipeline_runner():
 
     col1, col2 = st.columns([1, 1])
 
-    samples = get_available_samples()
-    uploaded_path = None
+    target_csv_path = None
 
     with col1:
         st.subheader("📁 Upload CSV File")
@@ -28,28 +27,26 @@ def render_pipeline_runner():
         )
         if uploaded_file is not None:
             try:
-                uploaded_path = save_uploaded_csv(uploaded_file)
+                target_csv_path = save_uploaded_csv(uploaded_file)
                 st.success(f"Uploaded: **{uploaded_file.name}** ({len(uploaded_file.getvalue()) / 1024:.1f} KB)")
             except ValueError as val_err:
                 st.error(str(val_err))
 
     with col2:
         st.subheader("📊 Choose Sample Dataset")
-        combined_options = {}
-        if uploaded_path and os.path.exists(uploaded_path):
-            upload_key = f"📎 Uploaded: {uploaded_file.name}"
-            combined_options[upload_key] = uploaded_path
-        
-        combined_options.update(samples)
-
+        samples = get_available_samples()
         selected_sample = st.selectbox(
             "Available Sample Datasets",
-            options=list(combined_options.keys()),
-            index=0 if combined_options else None,
+            options=list(samples.keys()),
+            index=0 if samples else None,
         )
         if selected_sample:
-            target_csv_path = combined_options[selected_sample]
-            st.info(f"Selected: **{selected_sample}**")
+            # Sample is only a *fallback*: an uploaded file always wins.
+            if target_csv_path is None:
+                target_csv_path = samples[selected_sample]
+                st.info(f"Selected: **{selected_sample}**")
+            else:
+                st.info("Using uploaded file (sample selection ignored).")
 
     st.markdown("---")
 

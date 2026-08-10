@@ -26,12 +26,21 @@ from langchain_core.language_models.chat_models import BaseChatModel
 # Context building
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are a helpful data-analyst assistant. You answer questions \
-ONLY from the REPORT CONTEXT below. Rules:
-- If the answer is not in the REPORT CONTEXT, say "Not in this report" and briefly \
-explain what the report does contain.
-- Cite numbers exactly as they appear in the context; never invent numbers.
-- Be concise (3 sentences or fewer unless asked for detail)."""
+SYSTEM_PROMPT = """You are an expert AI Data Analyst assistant. You help users understand their dataset based on the REPORT CONTEXT provided below.
+
+Rules:
+1. OVERVIEW & DATASET QUESTIONS:
+   - When asked what the dataset is about, summarized, or intended for, infer a clear explanation using the dataset file name, column names, data types, descriptive statistics, insights, and recommendations.
+   - Example: If column names are region, units, price, sales, explain that the dataset contains sales transaction records tracking product units, prices, and revenue across regions.
+
+2. SPECIFIC METRICS & NUMBERS:
+   - Cite exact numbers and column names as they appear in the context. Never invent numbers.
+
+3. OUT-OF-SCOPE METRICS:
+   - Only say "Not in this report" if the user asks for specific data or metrics that are completely absent from the dataset (for instance, asking for profit margins or customer age when those columns do not exist). When doing so, briefly state what metrics ARE available.
+
+4. CONCISENESS:
+   - Be clear, professional, and helpful (3-5 sentences unless detailed analysis is requested)."""
 
 
 def _fmt(res: Any, indent: int = 1) -> str:
@@ -78,6 +87,10 @@ def build_context(state: Dict[str, Any]) -> str:
             "datetime_columns": profile.get("datetime_columns"),
         }),
         ("PROFILE_COLUMNS", cols_val if isinstance(cols_val, dict) else {}),
+        ("MISSING_VALUES", profile.get("missing_values") or {}),
+        ("DESCRIPTIVE_STATS", profile.get("descriptive_stats") or {}),
+
+        ("ANALYSIS_RESULTS", state.get("analysis_results") or []),
 
         ("VALIDATION", {
             "status": validation.get("status"),

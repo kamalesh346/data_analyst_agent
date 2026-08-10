@@ -8,6 +8,11 @@ All three members import `AgentState` from here (directly, or via the
   * M3 (Insight)   writes: validation_report, insights, recommendations,
                             report_path, pdf_path, report_status
   * Shared: error_log, thinking_log, status
+
+`analysis_results`: canonical type is a **list** of result dicts, each shaped
+`{task_id, title, kind, column?, status, stats, files}` so Member 3's
+validation can cross-check it. (Member 2's node currently writes a dict keyed
+by task name — see the integration notes; align on the list form.)
 """
 
 from __future__ import annotations
@@ -17,44 +22,32 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class AgentState(TypedDict, total=False):
-    """Everything one full pipeline run carries between nodes.
-
-    Member 1 (Profiler Agent):
-        - Reads:  csv_path
-        - Writes: profile, profile_report_path, error_log, status
-
-    Member 2 (Analysis Agent):
-        - Reads:  csv_path, profile, profile_report_path
-        - Writes: analysis_plan, analysis_results, generated_files, execution_log, reflection_notes
-
-    Member 3 (Insight & Report Agent):
-        - Reads:  csv_path, profile, analysis_plan, analysis_results, generated_files
-        - Writes: validation_report, insights, recommendations, report_path, pdf_path, report_status
-    """
+    """Everything one full pipeline run carries between nodes."""
 
     # --- Input / M1 Profiler -----------------------------------------
     csv_path: str
-    profile: Optional[Dict[str, Any]]
-    profile_report_path: Optional[str]
+    profile: Dict[str, Any]
+    profile_report_path: str
 
     # --- M2 Analysis (planner + executor + reflector) ----------------
-    analysis_plan: Optional[List[Dict[str, Any]]]
-    analysis_results: Optional[Any]
-    generated_files: Optional[List[str]]
-    execution_log: Optional[List[Dict[str, Any]]]
-    reflection_notes: Optional[List[str]]
+    analysis_plan: List[Dict[str, Any]]
+    analysis_results: List[Dict[str, Any]]
+    generated_files: List[str]
+    execution_log: List[Dict[str, Any]]
+    reflection_notes: List[str]
 
     # --- M3 Insight & Report -------------------------------------------
-    validation_report: Optional[Dict[str, Any]]
-    insights: Optional[List[Dict[str, Any]]]
-    recommendations: Optional[List[str]]
-    report_path: Optional[str]
+    validation_report: Dict[str, Any]
+    insights: List[Dict[str, Any]]
+    recommendations: List[str]
+    report_path: str
     pdf_path: Optional[str]
-    report_status: Optional[str]  # "ok" | "degraded" | "failed"
+    report_status: str  # "ok" | "degraded" | "failed"
 
     # --- Shared ------------------------------------------------------
     error_log: List[str]
-    thinking_log: Optional[List[str]]
+    thinking_log: List[str]
+    llm_calls: List[Dict[str, Any]]
     status: str  # "running" | "in_progress" | "completed" | "failed"
 
 
@@ -75,7 +68,7 @@ class StateContract(BaseModel):
     profile: Dict[str, Any] = Field(default_factory=dict)
     profile_report_path: Optional[str] = None
     analysis_plan: List[Dict[str, Any]] = Field(default_factory=list)
-    analysis_results: Any = Field(default_factory=list)
+    analysis_results: List[Dict[str, Any]] = Field(default_factory=list)
     generated_files: List[str] = Field(default_factory=list)
     execution_log: List[Dict[str, Any]] = Field(default_factory=list)
     reflection_notes: List[str] = Field(default_factory=list)
@@ -87,6 +80,7 @@ class StateContract(BaseModel):
     report_status: str = "ok"
     error_log: List[str] = Field(default_factory=list)
     thinking_log: List[str] = Field(default_factory=list)
+    llm_calls: List[Dict[str, Any]] = Field(default_factory=list)
     status: str = "in_progress"
 
     @field_validator(
